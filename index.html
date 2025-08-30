@@ -11,6 +11,7 @@
     input, textarea, button, select { width: 100%; padding: 0.6em; margin-top: 0.3em; }
     button { background: #1a202c; color: white; border: none; cursor: pointer; border-radius: 4px; }
     .template { border: 1px solid #ccc; padding: 0.6em; margin-bottom: 0.6em; display: flex; justify-content: space-between; align-items: center; }
+    .ok { color:#0a7f00; } .err { color:#b00020; }
   </style>
 </head>
 <body>
@@ -18,13 +19,14 @@
 
   <div class="form-group">
     <label>Admin API URL</label>
-    <input id="apiUrl" value="https://balaji365-admin.workers.dev" readonly />
+    <!-- Correct account subdomain -->
+    <input id="apiUrl" value="https://balaji365-admin.btim4147.workers.dev" />
   </div>
 
   <div class="form-group">
     <label>Admin Secret (Bearer)</label>
     <input id="secret" type="password" placeholder="Enter admin secret" />
-    <p style="font-size:0.9em;color:#555;">This is stored only in memory while the page is open.</p>
+    <p style="font-size:0.9em;color:#555;">Stored only in your browser (localStorage) for convenience.</p>
   </div>
 
   <h2>Send Custom Push</h2>
@@ -37,11 +39,12 @@
     <textarea id="cBody" maxlength="120" rows="3" placeholder="Type push body…"></textarea>
   </div>
   <button onclick="sendCustom()">Send Custom Push</button>
-  <div id="cResp" style="margin-top:0.5em; color:#006400;"></div>
+  <div id="cResp" class="ok" style="margin-top:0.5em;"></div>
 
   <h2>Send a Casino Template</h2>
   <button onclick="loadBank()">Load Templates</button>
   <div id="bank" style="margin-top:1em;"></div>
+  <div id="bResp" class="err"></div>
 
   <h2>Send Sports Push</h2>
   <div class="form-group">
@@ -54,14 +57,24 @@
     <label>Time (optional, e.g., 19:30)</label><input id="sWhen" placeholder="Optional time" />
   </div>
   <button onclick="sendSports()">Send Sports Push</button>
-  <div id="sResp" style="margin-top:0.5em; color:#006400;"></div>
+  <div id="sResp" class="ok" style="margin-top:0.5em;"></div>
 
 <script>
+/* ---- remember URL & secret locally ---- */
+const urlInput = document.getElementById('apiUrl');
+const secInput = document.getElementById('secret');
+const savedUrl = localStorage.getItem('balaji_api_url');
+const savedSec = localStorage.getItem('balaji_admin_secret');
+if (savedUrl) urlInput.value = savedUrl;
+if (savedSec) secInput.value = savedSec;
+urlInput.addEventListener('input', e => localStorage.setItem('balaji_api_url', e.target.value.trim()));
+secInput.addEventListener('input', e => localStorage.setItem('balaji_admin_secret', e.target.value.trim()));
+
 function getConfig() {
-  const apiUrl = document.getElementById('apiUrl').value.trim();
-  const secret = document.getElementById('secret').value.trim();
+  const apiUrl = urlInput.value.trim();
+  const secret = secInput.value.trim();
   if (!apiUrl || !secret) {
-    alert('Please fill in the admin secret.');
+    alert('Please fill in Admin API URL and Admin Secret.');
     throw new Error('Missing config');
   }
   return { apiUrl, secret };
@@ -71,31 +84,32 @@ async function sendCustom() {
   try {
     const { apiUrl, secret } = getConfig();
     const title = document.getElementById('cTitle').value.trim();
-    const body = document.getElementById('cBody').value.trim();
+    const body  = document.getElementById('cBody').value.trim();
     const res = await fetch(apiUrl + '/send-push', {
       method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + secret,
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Authorization': 'Bearer ' + secret, 'Content-Type': 'application/json' },
       body: JSON.stringify({ title, body })
     });
-    document.getElementById('cResp').innerText = `Response: ${res.status}`;
+    document.getElementById('cResp').textContent = 'Response: ' + res.status;
+    if (!res.ok) throw new Error('Failed: ' + res.status);
   } catch (e) {
-    alert(e.message);
+    document.getElementById('cResp').className = 'err';
+    document.getElementById('cResp').textContent = e.message;
   }
 }
 
 async function loadBank() {
+  const bResp = document.getElementById('bResp');
+  bResp.textContent = '';
   try {
     const { apiUrl, secret } = getConfig();
-    const res = await fetch(apiUrl + '/bank', {
-      headers: { 'Authorization': 'Bearer ' + secret }
-    });
+    const res = await fetch(apiUrl + '/bank', { headers: { 'Authorization': 'Bearer ' + secret } });
+    if (!res.ok) throw new Error('Failed: ' + res.status);
     const bank = await res.json();
     const container = document.getElementById('bank');
     container.innerHTML = '';
     const templates = [...(bank.slots?.afternoon || []), ...(bank.slots?.night || [])].filter(t => t.enabled);
+    if (!templates.length) container.innerHTML = '<p>No templates found.</p>';
     for (const t of templates) {
       const div = document.createElement('div');
       div.className = 'template';
@@ -106,10 +120,7 @@ async function loadBank() {
       btn.onclick = async () => {
         const resp = await fetch(apiUrl + '/send-casino', {
           method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + secret,
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Authorization': 'Bearer ' + secret, 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: t.id })
         });
         alert(`Sent "${t.title}" → ${resp.status}`);
@@ -118,7 +129,7 @@ async function loadBank() {
       container.appendChild(div);
     }
   } catch (e) {
-    alert(e.message);
+    bResp.textContent = e.message + ' (Check CORS_ORIGIN & secret)';
   }
 }
 
@@ -127,31 +138,23 @@ async function sendSports() {
     const { apiUrl, secret } = getConfig();
     const team1 = document.getElementById('sT1').value.trim();
     const team2 = document.getElementById('sT2').value.trim();
-    const when = document.getElementById('sWhen').value.trim();
+    const when  = document.getElementById('sWhen').value.trim();
     const res = await fetch(apiUrl + '/send-sports', {
       method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + secret,
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Authorization': 'Bearer ' + secret, 'Content-Type': 'application/json' },
       body: JSON.stringify({ team1, team2, when })
     });
-    document.getElementById('sResp').innerText = `Response: ${res.status}`;
+    document.getElementById('sResp').textContent = 'Response: ' + res.status;
+    if (!res.ok) throw new Error('Failed: ' + res.status);
   } catch (e) {
-    alert(e.message);
+    document.getElementById('sResp').className = 'err';
+    document.getElementById('sResp').textContent = e.message;
   }
 }
 
 function escapeHTML(str) {
-  return (str || '').replace(/[&<>"']/g, m => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  })[m]);
+  return (str || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 </script>
 </body>
 </html>
-
